@@ -1,0 +1,49 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-main
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and export Docker image
+        run: |
+          docker build -t aitest:latest .
+          docker save aitest:latest | gzip > aitest.tar.gz
+
+      - name: Deploy to Lighthouse
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.LIGHTHOUSE_HOST }}
+          username: ${{ secrets.LIGHTHOUSE_USER }}
+          key: ${{ secrets.LIGHTHOUSE_SSH_KEY }}
+          source: "aitest.tar.gz,docker-compose.yml"
+          target: "/home/ubuntu/aitest-deploy"
+          strip_components: 0
+
+      - name: Start application
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.LIGHTHOUSE_HOST }}
+          username: ${{ secrets.LIGHTHOUSE_USER }}
+          key: ${{ secrets.LIGHTHOUSE_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/aitest-deploy
+            docker load < aitest.tar.gz
+            docker compose down || true
+            docker compose up -d
+            docker image prune -f
+            rm aitest.tar.gz
